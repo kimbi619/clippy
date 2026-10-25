@@ -58,6 +58,14 @@ func (c *Client) AddEventHandler(fn func(any)) uint32 {
 	return c.wa.AddEventHandler(fn)
 }
 
+// JID returns the account JID (phone number) as a string, or empty if not yet paired.
+func (c *Client) JID() string {
+	if c.wa.Store.ID == nil {
+		return ""
+	}
+	return c.wa.Store.ID.User
+}
+
 // Connect brings the session online. If the number has never been paired it
 // starts an interactive QR flow and blocks until the scan succeeds, fails, or
 // ctx is cancelled. If already paired it reconnects immediately.
