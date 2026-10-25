@@ -52,6 +52,7 @@ class BridgeCallStart(BridgeView):
         platform = request.data.get("platform", "whatsapp")
         external_id = str(request.data.get("external_id", ""))
 
+        print(f"DEBUG bridge added_by={added_by!r}", flush=True)
         allowed = AllowedNumber.objects.select_related("owner").filter(number=added_by).first()
         if allowed is None:
             return Response({"detail": "number not allowed"}, status=status.HTTP_403_FORBIDDEN)
