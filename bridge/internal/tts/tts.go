@@ -10,5 +10,5 @@ import (
 type TTS interface {
 	// Synthesize returns a stream of raw PCM (int16, little-endian).
 	// The caller must close the reader when done.
-	Synthesize(ctx context.Context, text string) (io.ReadCloser, sampleRate int, err error)
+	Synthesize(ctx context.Context, text string) (io.ReadCloser, int, error)
 }
