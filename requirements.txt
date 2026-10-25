@@ -29,3 +29,5 @@ txaio==25.9.2
 typing_extensions==4.16.0
 zope.interface==8.6
 psycopg2-binary==2.9.10
+drf-spectacular==0.28.0
+drf-spectacular-sidecar==2026.10.1

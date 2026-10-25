@@ -5,7 +5,8 @@ from django.conf import settings
 from django.db import transaction
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
-from rest_framework import status
+from drf_spectacular.utils import OpenApiResponse, extend_schema, inline_serializer
+from rest_framework import serializers, status
 from rest_framework.permissions import BasePermission
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -13,6 +14,8 @@ from rest_framework.views import APIView
 from . import events
 from .models import AllowedNumber, Call, Participant, TranscriptSegment, UserSettings
 from .serializers import NoteSerializer, SegmentSerializer
+
+_BRIDGE_TAG = ["bridge (internal)"]
 
 
 class HasBridgeKey(BasePermission):
@@ -27,8 +30,23 @@ class BridgeView(APIView):
 
 
 class BridgeCallStart(BridgeView):
-    """The bot was added to a call. 403 means the adder isn't allowlisted: leave the call."""
-
+    @extend_schema(
+        summary="Start call (bot added to a call)",
+        request=inline_serializer(
+            "BridgeCallStartRequest",
+            fields={
+                "added_by": serializers.CharField(),
+                "platform": serializers.CharField(default="whatsapp"),
+                "external_id": serializers.CharField(required=False),
+            },
+        ),
+        responses={
+            201: inline_serializer("BridgeCallStartResponse", fields={"id": serializers.UUIDField(), "trigger_name": serializers.CharField()}),
+            200: inline_serializer("BridgeCallStartResponseExisting", fields={"id": serializers.UUIDField(), "trigger_name": serializers.CharField()}),
+            403: OpenApiResponse(description="Caller not on allowlist — bridge must leave the call."),
+        },
+        tags=_BRIDGE_TAG,
+    )
     def post(self, request):
         added_by = str(request.data.get("added_by", ""))
         platform = request.data.get("platform", "whatsapp")
@@ -59,8 +77,12 @@ class BridgeCallStart(BridgeView):
 
 
 class BridgeSegments(BridgeView):
-    """Body: a list of segments. Re-sending a seq overwrites it."""
-
+    @extend_schema(
+        summary="Post transcript segments",
+        request=SegmentSerializer(many=True),
+        responses={200: inline_serializer("BridgeSegmentsResponse", fields={"count": serializers.IntegerField()})},
+        tags=_BRIDGE_TAG,
+    )
     def post(self, request, call_id):
         call = get_object_or_404(Call, pk=call_id)
         ser = SegmentSerializer(data=request.data, many=True)
@@ -79,6 +101,12 @@ class BridgeSegments(BridgeView):
 
 
 class BridgeNote(BridgeView):
+    @extend_schema(
+        summary="Post a note from the bot",
+        request=NoteSerializer,
+        responses={201: NoteSerializer},
+        tags=_BRIDGE_TAG,
+    )
     def post(self, request, call_id):
         call = get_object_or_404(Call, pk=call_id)
         ser = NoteSerializer(data=request.data)
@@ -89,8 +117,12 @@ class BridgeNote(BridgeView):
 
 
 class BridgeCallEnd(BridgeView):
-    """Body: {"summary": "..."} (optional). Safe to call twice."""
-
+    @extend_schema(
+        summary="End call",
+        request=inline_serializer("BridgeCallEndRequest", fields={"summary": serializers.CharField(required=False)}),
+        responses={204: OpenApiResponse(description="Call ended.")},
+        tags=_BRIDGE_TAG,
+    )
     def post(self, request, call_id):
         call = get_object_or_404(Call, pk=call_id)
         if call.status != Call.Status.ENDED:
