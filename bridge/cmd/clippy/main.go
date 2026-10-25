@@ -30,7 +30,10 @@ func main() {
 		"store", cfg.StorePath,
 	)
 
-	wa, err := whatsapp.New(cfg.StorePath, log)
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	wa, err := whatsapp.New(ctx, cfg.StorePath, log)
 	if err != nil {
 		slog.Error("whatsapp init", "err", err)
 		os.Exit(1)
@@ -47,9 +50,6 @@ func main() {
 			logMessage(v)
 		}
 	})
-
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
 
 	if err := wa.Connect(ctx); err != nil {
 		slog.Error("connect", "err", err)

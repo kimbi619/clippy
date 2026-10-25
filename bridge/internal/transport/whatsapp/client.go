@@ -32,13 +32,13 @@ type Client struct {
 // New opens (or creates) the SQLite store at dbPath, restores the paired
 // session if one exists, and attaches the meowcaller voice stack. Connect must
 // be called to bring the session online.
-func New(dbPath string, log *slog.Logger) (*Client, error) {
-	container, err := sqlstore.New("sqlite", "file:"+dbPath+"?_foreign_keys=on", waLog.Stdout("WA-DB", "ERROR", false))
+func New(ctx context.Context, dbPath string, log *slog.Logger) (*Client, error) {
+	container, err := sqlstore.New(ctx, "sqlite", "file:"+dbPath+"?_foreign_keys=on", waLog.Stdout("WA-DB", "ERROR", false))
 	if err != nil {
 		return nil, fmt.Errorf("open store: %w", err)
 	}
 
-	device, err := container.GetFirstDevice()
+	device, err := container.GetFirstDevice(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("get device: %w", err)
 	}
