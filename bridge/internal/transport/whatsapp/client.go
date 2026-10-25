@@ -33,7 +33,7 @@ type Client struct {
 // session if one exists, and attaches the meowcaller voice stack. Connect must
 // be called to bring the session online.
 func New(ctx context.Context, dbPath string, log *slog.Logger) (*Client, error) {
-	container, err := sqlstore.New(ctx, "sqlite", "file:"+dbPath+"?_foreign_keys=on", waLog.Stdout("WA-DB", "ERROR", false))
+	container, err := sqlstore.New(ctx, "sqlite", "file:"+dbPath+"?_pragma=foreign_keys(1)", waLog.Stdout("WA-DB", "ERROR", false))
 	if err != nil {
 		return nil, fmt.Errorf("open store: %w", err)
 	}
