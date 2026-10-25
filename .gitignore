@@ -1,4 +1,17 @@
 .env
 __pycache__/
 *.pyc
+*.pyo
 venv/
+.venv/
+db.sqlite3
+*.sqlite3
+*.wav
+transcripts/
+
+# Go
+bridge/clippy
+bridge/clippy.exe
+bridge/whatsmeow.db
+bridge/whatsmeow.db-shm
+bridge/whatsmeow.db-wal

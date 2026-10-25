@@ -1,5 +1,4 @@
 from django.urls import path
-from rest_framework.authtoken.views import obtain_auth_token
 from rest_framework.routers import DefaultRouter
 
 from . import bridge_views, views
@@ -9,7 +8,6 @@ router.register("calls", views.CallViewSet, basename="call")
 router.register("allowlist", views.AllowedNumberViewSet, basename="allowlist")
 
 api_urlpatterns = [
-    path("auth/token/", obtain_auth_token),
     path("settings/", views.SettingsView.as_view()),
     path("devices/", views.DeviceView.as_view()),
     *router.urls,

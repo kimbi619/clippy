@@ -4,31 +4,36 @@ from urllib.parse import parse_qs
 from channels.db import database_sync_to_async
 from channels.generic.websocket import AsyncJsonWebsocketConsumer
 from channels.middleware import BaseMiddleware
+from django.contrib.auth import get_user_model
 from django.contrib.auth.models import AnonymousUser
-from rest_framework.authtoken.models import Token
+from rest_framework_simplejwt.exceptions import InvalidToken, TokenError
+from rest_framework_simplejwt.tokens import UntypedToken
 
 from .models import Call
 
+User = get_user_model()
+
 
 @database_sync_to_async
-def _user_for(key):
+def _user_for_jwt(raw_token):
     try:
-        return Token.objects.select_related("user").get(key=key).user
-    except Token.DoesNotExist:
+        payload = UntypedToken(raw_token)
+        return User.objects.get(pk=payload["user_id"])
+    except (InvalidToken, TokenError, User.DoesNotExist, KeyError):
         return AnonymousUser()
 
 
 class TokenAuthMiddleware(BaseMiddleware):
-    """Accepts `Authorization: Token <key>` or `?token=<key>` on the handshake."""
+    """Accepts `Authorization: Bearer <jwt>` or `?token=<jwt>` on the WS handshake."""
 
     async def __call__(self, scope, receive, send):
         key = None
         auth = dict(scope["headers"]).get(b"authorization", b"").decode()
-        if auth.startswith("Token "):
-            key = auth[6:]
+        if auth.startswith("Bearer "):
+            key = auth[7:]
         else:
             key = parse_qs(scope["query_string"].decode()).get("token", [None])[0]
-        scope["user"] = await _user_for(key) if key else AnonymousUser()
+        scope["user"] = await _user_for_jwt(key) if key else AnonymousUser()
         return await super().__call__(scope, receive, send)
 
 
@@ -53,7 +58,7 @@ class CallConsumer(AsyncJsonWebsocketConsumer):
         await self.channel_layer.group_add(self.group, self.channel_name)
         await self.accept()
 
-    async def disconnect(self, code):
+    async def disconnect(self, _code):
         if hasattr(self, "group"):
             await self.channel_layer.group_discard(self.group, self.channel_name)
 
