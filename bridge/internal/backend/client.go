@@ -45,7 +45,14 @@ func (c *Client) StartCall(ctx context.Context, addedBy, platform, externalID st
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode == http.StatusForbidden {
-		return nil, ErrNotAllowed
+		var body struct {
+			Detail string `json:"detail"`
+		}
+		_ = json.NewDecoder(resp.Body).Decode(&body)
+		if body.Detail == "number not allowed" {
+			return nil, ErrNotAllowed
+		}
+		return nil, fmt.Errorf("start call: 403 (check BRIDGE_API_KEY matches on both sides): %s", body.Detail)
 	}
 	if resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("start call: unexpected status %d", resp.StatusCode)
