@@ -1,6 +1,7 @@
 package config
 
 import (
+	"bufio"
 	"fmt"
 	"os"
 	"strings"
@@ -18,6 +19,10 @@ type Config struct {
 }
 
 func Load() (*Config, error) {
+	// Load .env from the bridge directory or one level up, .env always wins.
+	for _, p := range []string{".env", "../.env"} {
+		loadEnvFile(p)
+	}
 	c := &Config{
 		BackendURL:    env("BACKEND_URL", "http://localhost:8000"),
 		BridgeAPIKey:  os.Getenv("BRIDGE_API_KEY"),
@@ -48,4 +53,32 @@ func env(key, fallback string) string {
 		return v
 	}
 	return fallback
+}
+
+// loadEnvFile reads a .env file and sets each KEY=VALUE as an env var,
+// overriding whatever the shell already had.
+func loadEnvFile(path string) {
+	f, err := os.Open(path)
+	if err != nil {
+		return // file not found is fine
+	}
+	defer f.Close()
+	scanner := bufio.NewScanner(f)
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		k, v, ok := strings.Cut(line, "=")
+		if !ok {
+			continue
+		}
+		k = strings.TrimSpace(k)
+		v = strings.TrimSpace(v)
+		// Strip surrounding quotes if present.
+		if len(v) >= 2 && ((v[0] == '"' && v[len(v)-1] == '"') || (v[0] == '\'' && v[len(v)-1] == '\'')) {
+			v = v[1 : len(v)-1]
+		}
+		os.Setenv(k, v) // override shell value
+	}
 }
