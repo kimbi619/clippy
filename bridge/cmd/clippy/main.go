@@ -5,8 +5,10 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
+	"sync"
 	"syscall"
 
+	"github.com/purpshell/meowcaller"
 	"go.mau.fi/whatsmeow/types/events"
 
 	"github.com/kimbi619/clippy/bridge/internal/backend"
@@ -26,10 +28,7 @@ func main() {
 		slog.Error("config", "err", err)
 		os.Exit(1)
 	}
-	slog.Info("clippy starting",
-		"backend", cfg.BackendURL,
-		"store", cfg.StorePath,
-	)
+	slog.Info("clippy starting", "backend", cfg.BackendURL, "store", cfg.StorePath)
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
@@ -43,23 +42,23 @@ func main() {
 	be := backend.New(cfg.BackendURL, cfg.BridgeAPIKey)
 	mgr := session.NewManager(be, llm.NewPlaceholder(), stt.NewPlaceholder(), log)
 
-	// Register event handler BEFORE Connect.
+	// OnIncomingCall MUST be registered before Connect.
+	wa.Caller.OnIncomingCall(func(call *meowcaller.Call) {
+		go handleIncomingCall(ctx, call, mgr, log)
+	})
+
+	// Plain message / connection events.
 	wa.AddEventHandler(func(evt any) {
 		switch v := evt.(type) {
 		case *events.Connected:
 			slog.Info("session connected", "jid", wa.JID())
-
 		case *events.Disconnected:
 			slog.Info("session disconnected")
-
-		case *events.CallOffer:
-			handleCallOffer(ctx, v, wa, mgr, log)
-
-		case *events.CallTerminate:
-			handleCallTerminate(ctx, v, mgr, log)
-
 		case *events.Message:
-			logMessage(v)
+			slog.Info("message",
+				"from", redact(v.Info.Sender.User),
+				"text", whatsapp.TextFrom(v),
+			)
 		}
 	})
 
@@ -74,65 +73,87 @@ func main() {
 	wa.Disconnect()
 }
 
-func handleCallOffer(ctx context.Context, v *events.CallOffer, wa *whatsapp.Client, mgr *session.Manager, log *slog.Logger) {
-	addedBy := "+" + v.From.User
-	log.Info("incoming call", "from", redact(v.From.User), "call_id", v.CallID)
+func handleIncomingCall(ctx context.Context, call *meowcaller.Call, mgr *session.Manager, log *slog.Logger) {
+	peer := call.Peer()
+	addedBy := "+" + peer.User
+	log.Info("incoming call", "from", redact(peer.User), "call_id", call.ID())
 
-	sess, err := mgr.Start(ctx, v.CallID, addedBy, "whatsapp")
+	sess, err := mgr.Start(ctx, call.ID(), addedBy, "whatsapp")
 	if err != nil {
 		if err == backend.ErrNotAllowed {
-			log.Warn("call rejected — number not on allowlist", "from", redact(v.From.User))
-			// Reject the call via meowcaller so the caller knows we declined.
-			if err := wa.Caller.RejectCall(v.From, v.CallID); err != nil {
-				log.Error("reject call", "err", err)
+			log.Warn("rejecting call — number not on allowlist", "from", redact(peer.User))
+			_ = call.Reject()
+		} else {
+			log.Error("start call", "err", err)
+			_ = call.Reject()
+		}
+		return
+	}
+
+	// Pipe meowcaller float32 frames into a chan []int16 for the STT layer.
+	audioCh := make(chan []int16, 128)
+	var closeOnce sync.Once
+	closeAudio := func() { closeOnce.Do(func() { close(audioCh) }) }
+
+	call.Receive(meowcaller.SinkFunc(func(frame []float32) {
+		pcm := make([]int16, len(frame))
+		for i, s := range frame {
+			v := s * 32767
+			if v > 32767 {
+				v = 32767
+			} else if v < -32768 {
+				v = -32768
 			}
-			return
+			pcm[i] = int16(v)
 		}
-		log.Error("start call", "err", err)
+		select {
+		case audioCh <- pcm:
+		case <-ctx.Done():
+			closeAudio()
+		default: // drop frame rather than block if consumer is slow
+		}
+	}))
+
+	// callCtx is cancelled when the call ends or the process shuts down.
+	callCtx, cancelCall := context.WithCancel(ctx)
+
+	call.OnEnd(func(reason string) {
+		log.Info("call ended", "call_id", call.ID(), "reason", reason)
+		cancelCall()
+		closeAudio()
+	})
+
+	if err := call.Answer(); err != nil {
+		log.Error("answer call", "err", err)
+		cancelCall()
+		closeAudio()
+		mgr.End(ctx, call.ID())
 		return
 	}
+	log.Info("call answered", "call_id", sess.CallID)
 
-	// Accept the call and get the audio stream.
-	audioIn, err := wa.Caller.AcceptCall(v.From, v.CallID)
+	// Run STT; each final segment is forwarded to the session (which checks the LLM).
+	segCh, err := stt.NewPlaceholder().Stream(callCtx, audioCh, meowcaller.SampleRate)
 	if err != nil {
-		log.Error("accept call", "err", err)
-		mgr.End(ctx, v.CallID)
+		log.Error("stt stream", "err", err)
+		cancelCall()
+		closeAudio()
+		mgr.End(ctx, call.ID())
 		return
 	}
-	log.Info("call accepted", "call_id", sess.CallID)
+	for seg := range segCh {
+		sess.HandleSegment(ctx, seg)
+	}
 
-	// Run STT on audio in the background; each segment is forwarded to the session.
-	go func() {
-		callCtx, cancel := context.WithCancel(ctx)
-		defer cancel()
-
-		segCh, err := stt.NewPlaceholder().Stream(callCtx, audioIn, 16000)
-		if err != nil {
-			log.Error("stt stream", "err", err)
-			return
-		}
-		for seg := range segCh {
-			sess.HandleSegment(callCtx, seg)
-		}
-	}()
+	// segCh drained (callCtx cancelled) — finalize the call.
+	mgr.End(ctx, call.ID())
 }
 
-func handleCallTerminate(ctx context.Context, v *events.CallTerminate, mgr *session.Manager, log *slog.Logger) {
-	log.Info("call terminated", "from", redact(v.From.User), "reason", v.Reason)
-	mgr.End(ctx, v.CallID)
-}
-
-func logMessage(msg *events.Message) {
-	text := whatsapp.TextFrom(msg)
-	slog.Info("message",
-		"from", redact(msg.Info.Sender.User),
-		"text", text,
-	)
-}
-
+// redact replaces middle digits of a phone number so it is safe to log.
 func redact(phone string) string {
 	if len(phone) < 7 {
 		return "***"
 	}
 	return phone[:3] + "****" + phone[len(phone)-3:]
 }
+
