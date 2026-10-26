@@ -43,11 +43,12 @@ func main() {
 	}
 
 	be := backend.New(cfg.BackendURL, cfg.BridgeAPIKey)
-	mgr := session.NewManager(be, llm.NewPlaceholder(), stt.NewPlaceholder(), log)
+	sttClient := stt.NewWhisperClient(cfg.STTServerURL, 5*time.Second)
+	mgr := session.NewManager(be, llm.NewPlaceholder(), sttClient, log)
 
 	// OnIncomingCall MUST be registered before Connect.
 	wa.Caller.OnIncomingCall(func(call *meowcaller.Call) {
-		go handleIncomingCall(ctx, call, mgr, log)
+		go handleIncomingCall(ctx, call, mgr, sttClient, log)
 	})
 
 	// Plain message / connection events.
@@ -76,7 +77,7 @@ func main() {
 	wa.Disconnect()
 }
 
-func handleIncomingCall(ctx context.Context, call *meowcaller.Call, mgr *session.Manager, log *slog.Logger) {
+func handleIncomingCall(ctx context.Context, call *meowcaller.Call, mgr *session.Manager, sttSvc stt.STT, log *slog.Logger) {
 	peer := call.Peer()
 	addedBy := "+" + peer.User
 	log.Info("incoming call", "from", redact(peer.User), "call_id", call.ID())
@@ -161,7 +162,7 @@ func handleIncomingCall(ctx context.Context, call *meowcaller.Call, mgr *session
 	log.Info("call answered", "call_id", sess.CallID)
 
 	// Run STT; each final segment is forwarded to the session (which checks the LLM).
-	segCh, err := stt.NewPlaceholder().Stream(callCtx, audioCh, meowcaller.SampleRate)
+	segCh, err := sttSvc.Stream(callCtx, audioCh, meowcaller.SampleRate)
 	if err != nil {
 		log.Error("stt stream", "err", err)
 		cancelCall()

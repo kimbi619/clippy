@@ -13,6 +13,7 @@ type Config struct {
 	WhatsAppPhone  string   // E.164 number the bot is registered on
 	StorePath      string   // path to the whatsmeow SQLite session file
 	AllowedNumbers []string // E.164 numbers allowed to add the bot
+	STTServerURL   string   // faster-whisper HTTP server base URL
 	AssemblyAIKey  string
 	AnthropicKey   string
 	LogLevel       string // debug | info | warn | error
@@ -28,6 +29,7 @@ func Load() (*Config, error) {
 		BridgeAPIKey:  os.Getenv("BRIDGE_API_KEY"),
 		WhatsAppPhone: os.Getenv("WHATSAPP_PHONE"),
 		StorePath:     env("STORE_PATH", "whatsmeow.db"),
+		STTServerURL:  env("STT_SERVER_URL", "http://localhost:8001"),
 		AssemblyAIKey: os.Getenv("ASSEMBLYAI_KEY"),
 		AnthropicKey:  os.Getenv("ANTHROPIC_KEY"),
 		LogLevel:      env("LOG_LEVEL", "info"),
