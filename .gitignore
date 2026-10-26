@@ -16,3 +16,4 @@ bridge/clippy.exe
 bridge/whatsmeow.db
 bridge/whatsmeow.db-shm
 bridge/whatsmeow.db-wal
+bridge/recordings/*.wav

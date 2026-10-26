@@ -2,11 +2,14 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"sync"
 	"syscall"
+	"time"
 
 	"github.com/purpshell/meowcaller"
 	"go.mau.fi/whatsmeow/types/events"
@@ -90,12 +93,36 @@ func handleIncomingCall(ctx context.Context, call *meowcaller.Call, mgr *session
 		return
 	}
 
+	// Open WAV recorder for this call.
+	wavPath := wavRecordingPath(call.ID())
+	wavSink, err := meowcaller.WAVRecorder(wavPath)
+	if err != nil {
+		log.Warn("could not open WAV recorder", "path", wavPath, "err", err)
+		wavSink = nil
+	} else {
+		log.Info("recording audio", "path", wavPath)
+	}
+
 	// Pipe meowcaller float32 frames into a chan []int16 for the STT layer.
 	audioCh := make(chan []int16, 128)
 	var closeOnce sync.Once
-	closeAudio := func() { closeOnce.Do(func() { close(audioCh) }) }
+	closeAudio := func() {
+		closeOnce.Do(func() {
+			close(audioCh)
+			if wavSink != nil {
+				if cerr := wavSink.Close(); cerr != nil {
+					log.Warn("close WAV", "err", cerr)
+				}
+			}
+		})
+	}
 
-	call.Receive(meowcaller.SinkFunc(func(frame []float32) {
+	sink := meowcaller.SinkFunc(func(frame []float32) {
+		// Write to WAV file.
+		if wavSink != nil {
+			_ = wavSink.WriteFrame(frame)
+		}
+		// Convert to int16 PCM for STT.
 		pcm := make([]int16, len(frame))
 		for i, s := range frame {
 			v := s * 32767
@@ -112,7 +139,8 @@ func handleIncomingCall(ctx context.Context, call *meowcaller.Call, mgr *session
 			closeAudio()
 		default: // drop frame rather than block if consumer is slow
 		}
-	}))
+	})
+	call.Receive(sink)
 
 	// callCtx is cancelled when the call ends or the process shuts down.
 	callCtx, cancelCall := context.WithCancel(ctx)
@@ -147,6 +175,16 @@ func handleIncomingCall(ctx context.Context, call *meowcaller.Call, mgr *session
 
 	// segCh drained (callCtx cancelled) — finalize the call.
 	mgr.End(ctx, call.ID())
+}
+
+// wavRecordingPath returns the path for a call's WAV recording under recordings/.
+func wavRecordingPath(callID string) string {
+	ts := time.Now().Format("20060102-150405")
+	name := fmt.Sprintf("call_%s_%s.wav", ts, callID)
+	if len(name) > 120 {
+		name = name[:120] + ".wav"
+	}
+	return filepath.Join("recordings", name)
 }
 
 // redact replaces middle digits of a phone number so it is safe to log.
