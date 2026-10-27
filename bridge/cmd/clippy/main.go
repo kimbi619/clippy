@@ -8,6 +8,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -118,7 +119,11 @@ func handleIncomingCall(ctx context.Context, call *meowcaller.Call, mgr *session
 		})
 	}
 
+	// frameCount tracks how many audio frames arrived — logged at call end for diagnosis.
+	var frameCount atomic.Int64
+
 	sink := meowcaller.SinkFunc(func(frame []float32) {
+		frameCount.Add(1)
 		// Write to WAV file.
 		if wavSink != nil {
 			_ = wavSink.WriteFrame(frame)
@@ -143,11 +148,34 @@ func handleIncomingCall(ctx context.Context, call *meowcaller.Call, mgr *session
 	})
 	call.Receive(sink)
 
+	// Log when RTP media actually starts flowing from the relay.
+	call.OnReady(func() {
+		log.Info("media ready — RTP flowing", "call_id", call.ID())
+	})
+
+	// Log group call participant changes so we can see the 2-party → group transition.
+	call.OnGroupState(func(state meowcaller.GroupCallState) {
+		ids := make([]string, 0, len(state.Participants))
+		for _, p := range state.Participants {
+			ids = append(ids, redact(p.JID.User))
+		}
+		log.Info("group state update",
+			"call_id", call.ID(),
+			"transaction", state.TransactionID,
+			"participants", ids,
+		)
+	})
+
 	// callCtx is cancelled when the call ends or the process shuts down.
 	callCtx, cancelCall := context.WithCancel(ctx)
 
 	call.OnEnd(func(reason string) {
-		log.Info("call ended", "call_id", call.ID(), "reason", reason)
+		log.Info("call ended",
+			"call_id", call.ID(),
+			"reason", reason,
+			"frames_received", frameCount.Load(),
+			"audio_ms", frameCount.Load()*int64(meowcaller.FrameSamples)*1000/int64(meowcaller.SampleRate),
+		)
 		cancelCall()
 		closeAudio()
 	})
@@ -171,6 +199,7 @@ func handleIncomingCall(ctx context.Context, call *meowcaller.Call, mgr *session
 		return
 	}
 	for seg := range segCh {
+		log.Info("transcript", "call_id", sess.CallID, "text", seg.Text, "start_ms", seg.StartMS, "end_ms", seg.EndMS)
 		sess.HandleSegment(ctx, seg)
 	}
 
