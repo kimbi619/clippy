@@ -6,6 +6,7 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"time"
 )
@@ -48,8 +49,11 @@ func (w *WhisperClient) run(ctx context.Context, audio <-chan []int16, sampleRat
 		if len(buf) == 0 {
 			return
 		}
+		slog.Info("stt: sending chunk", "samples", len(buf), "duration_ms", elapsed)
 		text, err := w.transcribe(ctx, buf)
-		if err == nil && text != "" {
+		if err != nil {
+			slog.Warn("stt: transcribe error", "err", err)
+		} else if text != "" {
 			endMS := chunkStartMS + elapsed
 			out <- Segment{
 				Speaker: "A",
@@ -59,6 +63,8 @@ func (w *WhisperClient) run(ctx context.Context, audio <-chan []int16, sampleRat
 				IsFinal: true,
 			}
 			chunkStartMS = endMS
+		} else {
+			slog.Info("stt: no speech detected in chunk")
 		}
 		buf = buf[:0]
 		elapsed = 0
