@@ -14,6 +14,7 @@ import (
 
 	"github.com/mdp/qrterminal/v3"
 	"github.com/purpshell/meowcaller"
+	"github.com/rs/zerolog"
 	"go.mau.fi/whatsmeow"
 	"go.mau.fi/whatsmeow/store/sqlstore"
 	"go.mau.fi/whatsmeow/types/events"
@@ -47,7 +48,9 @@ func New(ctx context.Context, dbPath string, log *slog.Logger) (*Client, error) 
 
 	// meowcaller MUST be attached before Connect; New() is the only path to a
 	// Client, so this invariant is always satisfied.
-	caller := meowcaller.NewClient(wa)
+	// WithLogger surfaces relay/SRTP/media errors that were previously swallowed.
+	mcLog := zerolog.New(os.Stdout).With().Timestamp().Str("component", "meowcaller").Logger().Level(zerolog.InfoLevel)
+	caller := meowcaller.NewClient(wa, meowcaller.WithLogger(mcLog))
 
 	return &Client{wa: wa, Caller: caller, log: log}, nil
 }
