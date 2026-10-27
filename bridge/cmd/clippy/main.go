@@ -44,7 +44,7 @@ func main() {
 	}
 
 	be := backend.New(cfg.BackendURL, cfg.BridgeAPIKey)
-	sttClient := stt.NewWhisperClient(cfg.STTServerURL, 5*time.Second)
+	sttClient := stt.NewWhisperClient(cfg.STTServerURL, 3*time.Second)
 	mgr := session.NewManager(be, llm.NewPlaceholder(), sttClient, log)
 
 	// OnIncomingCall MUST be registered before Connect.

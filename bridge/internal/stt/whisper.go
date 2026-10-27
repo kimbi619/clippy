@@ -45,12 +45,12 @@ func (w *WhisperClient) run(ctx context.Context, audio <-chan []int16, sampleRat
 	var chunkStartMS uint32
 	var elapsed uint32 // ms of audio accumulated in buf
 
-	flush := func() {
+	doFlush := func(tctx context.Context) {
 		if len(buf) == 0 {
 			return
 		}
 		slog.Info("stt: sending chunk", "samples", len(buf), "duration_ms", elapsed)
-		text, err := w.transcribe(ctx, buf)
+		text, err := w.transcribe(tctx, buf)
 		if err != nil {
 			slog.Warn("stt: transcribe error", "err", err)
 		} else if text != "" {
@@ -70,14 +70,24 @@ func (w *WhisperClient) run(ctx context.Context, audio <-chan []int16, sampleRat
 		elapsed = 0
 	}
 
+	flush := func() { doFlush(ctx) }
+
+	// finalFlush uses a fresh context because callCtx may already be cancelled
+	// by the time OnEnd fires — we still want to transcribe any buffered audio.
+	finalFlush := func() {
+		fctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		doFlush(fctx)
+	}
+
 	for {
 		select {
 		case <-ctx.Done():
-			flush()
+			finalFlush()
 			return
 		case frame, ok := <-audio:
 			if !ok {
-				flush()
+				finalFlush()
 				return
 			}
 			buf = append(buf, frame...)
