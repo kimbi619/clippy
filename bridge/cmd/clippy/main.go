@@ -148,9 +148,29 @@ func handleIncomingCall(ctx context.Context, call *meowcaller.Call, mgr *session
 	})
 	call.Receive(sink)
 
+	// callCtx is cancelled when the call ends or the process shuts down.
+	callCtx, cancelCall := context.WithCancel(ctx)
+
 	// Log when RTP media actually starts flowing from the relay.
 	call.OnReady(func() {
 		log.Info("media ready — RTP flowing", "call_id", call.ID())
+		// Heartbeat: log frame count every 5s so we can see audio stop mid-call.
+		go func() {
+			t := time.NewTicker(5 * time.Second)
+			defer t.Stop()
+			for {
+				select {
+				case <-callCtx.Done():
+					return
+				case <-t.C:
+					log.Info("audio heartbeat",
+						"call_id", call.ID(),
+						"frames_received", frameCount.Load(),
+						"audio_ms", frameCount.Load()*int64(meowcaller.FrameSamples)*1000/int64(meowcaller.SampleRate),
+					)
+				}
+			}
+		}()
 	})
 
 	// Log group call participant changes so we can see the 2-party → group transition.
@@ -165,9 +185,6 @@ func handleIncomingCall(ctx context.Context, call *meowcaller.Call, mgr *session
 			"participants", ids,
 		)
 	})
-
-	// callCtx is cancelled when the call ends or the process shuts down.
-	callCtx, cancelCall := context.WithCancel(ctx)
 
 	call.OnEnd(func(reason string) {
 		log.Info("call ended",
